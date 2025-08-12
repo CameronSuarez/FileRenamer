@@ -7,7 +7,6 @@ from datetime import datetime
 import csv
 import sys
 
-# ---- PyInstaller helper (optional) ----
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
@@ -15,7 +14,6 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-# ---- Optional Drag & Drop support ----
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
     dnd_available = True
@@ -24,19 +22,16 @@ except ImportError:
     dnd_available = False
     BaseClass = tk.Tk
 
-
 class BulkFileRenamer(BaseClass):
     def __init__(self):
         super().__init__()
         self.title("Bulk File Renamer")
         self.geometry("900x650")
 
-        # Data
         self.folder_path = None
         self.file_list = []
         self.preview_data = {}
 
-        # Case transforms
         self.case_transform_map = {
             "None": lambda s: s,
             "lower": lambda s: s.lower(),
@@ -47,9 +42,10 @@ class BulkFileRenamer(BaseClass):
         self.create_widgets()
         self.update_ui_state()
 
-    # ---------- UI ----------
+    # UI 
     def create_widgets(self):
-        # Top: folder selection
+        """Builds the main UI layout (stable + responsive)."""
+        # --- TOP: Folder selection (uses pack in its own container) ---
         top = tk.Frame(self, padx=10, pady=8)
         top.pack(fill=tk.X)
         tk.Label(top, text="Folder:").pack(side=tk.LEFT)
@@ -63,118 +59,109 @@ class BulkFileRenamer(BaseClass):
             self.folder_entry.drop_target_register(DND_FILES)
             self.folder_entry.dnd_bind("<<Drop>>", self.on_drop)
 
-        # Middle: options + actions
+        # --- MIDDLE: Options + Actions (use GRID here; do NOT use pack in this frame) ---
         mid = tk.Frame(self, padx=10, pady=6)
-        mid.pack(fill=tk.X)
+        mid.pack(fill=tk.BOTH, expand=True)
 
-        # Notebook with two modes
+        # Left side: Notebook expands
         self.notebook = ttk.Notebook(mid)
-        self.notebook.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.notebook.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
-        # --- Parts mode tab ---
+        # Right side: Actions column with a safe min width
+        actions = tk.Frame(mid, padx=8)
+        actions.grid(row=0, column=1, sticky="n")
+        # Let the notebook expand; reserve some width for the actions column
+        mid.grid_columnconfigure(0, weight=1)       # notebook grows
+        mid.grid_columnconfigure(1, minsize=170)    # enough space for buttons
+        mid.grid_rowconfigure(0, weight=1)
+
+        # Buttons (fill X so text never clips)
+        self.preview_btn = tk.Button(actions, text="Preview", width=16, command=self.preview_rename)
+        self.preview_btn.pack(pady=4, fill=tk.X)
+
+        self.rename_btn = tk.Button(actions, text="Rename", width=16, command=self.perform_rename)
+        self.rename_btn.pack(pady=4, fill=tk.X)
+
+        self.undo_btn = tk.Button(actions, text="Undo (last)", width=16, command=self.undo_rename)
+        self.undo_btn.pack(pady=4, fill=tk.X)
+
+        # ----- Tabs inside notebook -----
+        # Parts mode
         parts_tab = tk.Frame(self.notebook, padx=10, pady=10)
         self.notebook.add(parts_tab, text="Build from parts")
 
-        # Row 1: Prefix / Suffix
-        r1 = tk.Frame(parts_tab)
-        r1.pack(fill=tk.X, pady=3)
+        r1 = tk.Frame(parts_tab); r1.pack(fill=tk.X, pady=3)
         tk.Label(r1, text="Prefix:").pack(side=tk.LEFT)
         self.prefix_var = tk.StringVar()
         tk.Entry(r1, textvariable=self.prefix_var, width=18).pack(side=tk.LEFT, padx=6)
-
         tk.Label(r1, text="Suffix:").pack(side=tk.LEFT)
         self.suffix_var = tk.StringVar()
         tk.Entry(r1, textvariable=self.suffix_var, width=18).pack(side=tk.LEFT, padx=6)
 
-        # Row 2: Find/Replace + Regex
-        r2 = tk.Frame(parts_tab)
-        r2.pack(fill=tk.X, pady=3)
+        r2 = tk.Frame(parts_tab); r2.pack(fill=tk.X, pady=3)
         tk.Label(r2, text="Find:").pack(side=tk.LEFT)
         self.find_var = tk.StringVar()
         tk.Entry(r2, textvariable=self.find_var, width=18).pack(side=tk.LEFT, padx=6)
-
         tk.Label(r2, text="Replace:").pack(side=tk.LEFT)
         self.replace_var = tk.StringVar()
         tk.Entry(r2, textvariable=self.replace_var, width=18).pack(side=tk.LEFT, padx=6)
-
         self.regex_var = tk.BooleanVar(value=False)
         tk.Checkbutton(r2, text="Regex", variable=self.regex_var).pack(side=tk.LEFT, padx=6)
 
-        # Row 3: Numbering {n}, start & padding
-        r3 = tk.Frame(parts_tab)
-        r3.pack(fill=tk.X, pady=3)
+        r3 = tk.Frame(parts_tab); r3.pack(fill=tk.X, pady=3)
         tk.Label(r3, text="Start #:").pack(side=tk.LEFT)
         self.start_num_var = tk.IntVar(value=1)
         tk.Spinbox(r3, from_=0, to=1_000_000, textvariable=self.start_num_var, width=8).pack(side=tk.LEFT, padx=6)
-
         tk.Label(r3, text="Padding:").pack(side=tk.LEFT)
         self.padding_var = tk.IntVar(value=2)
         tk.Spinbox(r3, from_=0, to=10, textvariable=self.padding_var, width=5).pack(side=tk.LEFT, padx=6)
-
         tk.Label(r3, text="Case:").pack(side=tk.LEFT)
         self.case_var = tk.StringVar(value="None")
         ttk.Combobox(r3, state="readonly", width=10, textvariable=self.case_var,
-                     values=list(self.case_transform_map.keys())).pack(side=tk.LEFT, padx=6)
-
+                    values=list(self.case_transform_map.keys())).pack(side=tk.LEFT, padx=6)
         self.remove_spaces_var = tk.BooleanVar(value=False)
         tk.Checkbutton(r3, text="Remove spaces", variable=self.remove_spaces_var).pack(side=tk.LEFT, padx=6)
-
         self.keep_ext_var = tk.BooleanVar(value=True)
         tk.Checkbutton(r3, text="Keep extension", variable=self.keep_ext_var).pack(side=tk.LEFT, padx=6)
 
-        # Hint
         tk.Label(parts_tab, fg="#666",
-                 text="Tip: use {n} anywhere in Prefix/Suffix to insert numbering. Example: prefix='IMG_{n}_'").pack(anchor="w", pady=(6, 0))
+                text="Tip: use {n} anywhere in Prefix/Suffix to insert numbering. Example: prefix='IMG_{n}_'")\
+        .pack(anchor="w", pady=(6, 0))
 
-        # --- Pattern mode tab ---
+        # Pattern mode
         pattern_tab = tk.Frame(self.notebook, padx=10, pady=10)
         self.notebook.add(pattern_tab, text="Pattern")
 
-        r1p = tk.Frame(pattern_tab)
-        r1p.pack(fill=tk.X, pady=3)
+        r1p = tk.Frame(pattern_tab); r1p.pack(fill=tk.X, pady=3)
         tk.Label(r1p, text="Pattern:").pack(side=tk.LEFT)
         self.pattern_var = tk.StringVar(value="{stem}_{n}")
         tk.Entry(r1p, textvariable=self.pattern_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
 
-        r2p = tk.Frame(pattern_tab)
-        r2p.pack(fill=tk.X, pady=3)
+        r2p = tk.Frame(pattern_tab); r2p.pack(fill=tk.X, pady=3)
         tk.Label(r2p, text="Start #:").pack(side=tk.LEFT)
         self.pattern_start_num_var = tk.IntVar(value=1)
-        tk.Spinbox(r2p, from_=0, to=1_000_000, textvariable=self.pattern_start_num_var, width=8).pack(side=tk.LEFT, padx=6)
-
+        tk.Spinbox(r2p, from_=0, to=1_000_000, textvariable=self.pattern_start_num_var, width=8)\
+        .pack(side=tk.LEFT, padx=6)
         tk.Label(r2p, text="Padding:").pack(side=tk.LEFT)
         self.pattern_padding_var = tk.IntVar(value=2)
-        tk.Spinbox(r2p, from_=0, to=10, textvariable=self.pattern_padding_var, width=5).pack(side=tk.LEFT, padx=6)
-
+        tk.Spinbox(r2p, from_=0, to=10, textvariable=self.pattern_padding_var, width=5)\
+        .pack(side=tk.LEFT, padx=6)
         tk.Label(r2p, text="Case:").pack(side=tk.LEFT)
         self.pattern_case_var = tk.StringVar(value="None")
         ttk.Combobox(r2p, state="readonly", width=10, textvariable=self.pattern_case_var,
-                     values=list(self.case_transform_map.keys())).pack(side=tk.LEFT, padx=6)
-
+                    values=list(self.case_transform_map.keys())).pack(side=tk.LEFT, padx=6)
         self.pattern_remove_spaces_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(r2p, text="Remove spaces", variable=self.pattern_remove_spaces_var).pack(side=tk.LEFT, padx=6)
-
+        tk.Checkbutton(r2p, text="Remove spaces", variable=self.pattern_remove_spaces_var)\
+        .pack(side=tk.LEFT, padx=6)
         self.auto_append_ext_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(r2p, text="Auto-append ext if {ext} missing", variable=self.auto_append_ext_var).pack(side=tk.LEFT, padx=6)
+        tk.Checkbutton(r2p, text="Auto-append ext if {ext} missing", variable=self.auto_append_ext_var)\
+        .pack(side=tk.LEFT, padx=6)
 
-        # Pattern help
-        help_txt = (
-            "Placeholders: {n}, {stem}, {ext}, {parent}, {yyyy}, {mm}, {dd}, {hh}, {mi}, {ss}\n"
-            "Example: '{parent}_{yyyy}-{mm}-{dd}_{stem}_{n}'"
-        )
-        tk.Label(pattern_tab, text=help_txt, fg="#666", justify="left").pack(anchor="w", pady=(6, 0))
+        tk.Label(pattern_tab, text=("Placeholders: {n}, {stem}, {ext}, {parent}, {yyyy}, {mm}, {dd}, {hh}, {mi}, {ss}\n"
+                                    "Example: '{parent}_{yyyy}-{mm}-{dd}_{stem}_{n}'"),
+                fg="#666", justify="left").pack(anchor="w", pady=(6, 0))
 
-        # Actions (right side)
-        actions = tk.Frame(mid, padx=10)
-        actions.pack(side=tk.RIGHT, anchor="n")
-        self.preview_btn = tk.Button(actions, text="Preview", width=14, command=self.preview_rename)
-        self.preview_btn.pack(pady=4)
-        self.rename_btn = tk.Button(actions, text="Rename", width=14, command=self.perform_rename)
-        self.rename_btn.pack(pady=4)
-        self.undo_btn = tk.Button(actions, text="Undo (last)", width=14, command=self.undo_rename)
-        self.undo_btn.pack(pady=4)
-
-        # Treeview for preview/results
+        # --- BOTTOM: Treeview (own container, uses grid internally) ---
         tv_frame = tk.Frame(self, padx=10, pady=8)
         tv_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -197,7 +184,7 @@ class BulkFileRenamer(BaseClass):
         tv_frame.grid_rowconfigure(0, weight=1)
         tv_frame.grid_columnconfigure(0, weight=1)
 
-    # ---------- Folder handling ----------
+
     def on_drop(self, event):
         folder_path_str = event.data.strip("{}")
         if os.path.isdir(folder_path_str):
@@ -235,7 +222,6 @@ class BulkFileRenamer(BaseClass):
         log_files = sorted(self.folder_path.glob("rename_log_*.csv")) if self.folder_path else []
         self.undo_btn.config(state=tk.NORMAL if log_files else tk.DISABLED)
 
-    # ---------- Preview / Rename / Undo ----------
     def update_preview_table(self, new_names=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -274,10 +260,11 @@ class BulkFileRenamer(BaseClass):
             try:
                 file_stem = old_path.stem
                 file_ext = old_path.suffix
+                num_str = str(start_num + i).zfill(padding)
+
                 if is_parts_mode:
                     new_stem = file_stem
 
-                    # find/replace
                     find_text = self.find_var.get()
                     replace_text = self.replace_var.get()
                     if find_text:
@@ -291,8 +278,9 @@ class BulkFileRenamer(BaseClass):
                     new_name = f"{prefix}{new_stem}{suffix}"
 
                     if "{n}" in new_name:
-                        num_str = str(start_num + i).zfill(padding)
                         new_name = new_name.replace("{n}", num_str)
+                    elif self.auto_number_var.get():
+                        new_name = f"{new_name}_{num_str}"
 
                     case_func = self.case_transform_map[self.case_var.get()]
                     if self.remove_spaces_var.get():
@@ -308,9 +296,12 @@ class BulkFileRenamer(BaseClass):
                         messagebox.showerror("Error", "Pattern cannot be empty in Pattern mode.")
                         return
 
+                    if self.pattern_auto_number_var.get() and "{n}" not in pattern:
+                        pattern += "_{n}"
+
                     now = datetime.now()
                     placeholders = {
-                        "{n}": str(start_num + i).zfill(padding),
+                        "{n}": num_str,
                         "{stem}": file_stem,
                         "{ext}": file_ext,
                         "{parent}": old_path.parent.name,
@@ -341,7 +332,7 @@ class BulkFileRenamer(BaseClass):
                 self.update_preview_table()
                 return
 
-        # collision-proofing against existing files
+        # collision-proofing
         final_names = []
         name_counts = {}
         for name in new_names:
@@ -425,7 +416,6 @@ class BulkFileRenamer(BaseClass):
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to undo rename for {new_path.name}: {e}")
 
-        # Refresh and clean up
         self.set_folder(self.folder_path)
         messagebox.showinfo("Undo Complete", f"Successfully undid {undone} renames.")
         try:
